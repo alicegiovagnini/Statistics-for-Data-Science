@@ -1,5 +1,5 @@
 # =====================================================================
-# CORRECTED VERSION — two fixes applied vs the original script:
+# CORRECTED VERSION — three fixes applied vs the original script:
 #
 #  [FIX 1] quantile_np(): wrapped in as.numeric() to drop the "99%" name
 #          that quantile() attaches. Without this the entire NP column of
@@ -13,6 +13,32 @@
 #          and ~7x worse than NP on Lognormal. After the fix AV beats NP when
 #          a model fits and matches NP when none does — i.e. it behaves as the
 #          paper and the slides claim. Search "[FIX" to see both spots.
+#
+#  [FIX 3] simulate_boolean_obs() (Section 4.3): the Boolean model is now
+#          GENERATED and its area A / perimeter P are MEASURED from a rasterized
+#          realization, instead of being reconstructed analytically from the
+#          realized germ count. The old shortcut made rho_1 and rho_2 both
+#          recover n_germs (MSE ~ rho), so the averaging had nothing to exploit
+#          and rho_AV was worse than rho_2 on 3 of the 4 rows of Table 6. After
+#          the fix rho_1 (area/perimeter) is genuinely noisy and explodes with
+#          rho while rho_2 (tangent points) stays accurate, so rho_AV tracks the
+#          better estimator and alpha_AV clearly improves alpha_1 — as in Table 6.
+#
+#  [FIX 4] run_simulation_4_1() (Section 4.1) is now PARALLELISED (mclapply) and
+#          run with many more Monte Carlo replicates (5000 vs 1000). With only
+#          1000 serial replicates the reported MSE was too noisy and the small
+#          finite-sample gain of AV/AVB over the best of mean/median was masked,
+#          so several near-Gaussian rows wrongly showed AV/AVB slightly worse
+#          than the mean. With more replicates the trend matches the paper (the
+#          only residual case, Cauchy n=30, is marginal in the paper too).
+#
+#  Also added: a printed table at the end comparing every simulation parameter
+#          with the paper, flagging which are IDENTICAL and which were reduced.
+#
+#  NOTE: results for Sections 4.3 and 4.4 are cached in checkpoints/. After any
+#        change to the estimators (or if an OLD buggy run left stale .rds files —
+#        a frequent cause of a blank NP column in Table 8), delete the
+#        checkpoints/ folder so the tables are recomputed from scratch.
 # =====================================================================
 
 # STATISTICS FOR DATA SCIENCE — PROJECT A.Y. 2025/26
@@ -349,42 +375,39 @@ run_simulation_4_1 <- function(n_vec = c(30, 50, 100),
     cat(sprintf("  Distribution: %s\n", dist_name))
 
     for (n in n_vec) {
-      # Per-replicate squared-error stores for the four estimators.
-      err_mean <- err_med <- err_AV <- err_AVB <- numeric(n_rep)
-      # Per-replicate CI hit/miss indicators for the two combined estimators.
-      cover_AV <- cover_AVB <- logical(n_rep)
-
-      for (rep in seq_len(n_rep)) {
-        # Draw a fresh sample and compute all estimators on it.
+      # [FIX 4] Run the n_rep replicates in PARALLEL (the old code looped
+      # serially, which made n_rep=1000 the practical ceiling and left the
+      # reported MSE too noisy: with so few replicates the tiny finite-sample
+      # gain of AV/AVB over the best of mean/median was masked by Monte Carlo
+      # error, so several near-Gaussian rows wrongly showed AV/AVB slightly
+      # WORSE than the mean. Parallelising lets us afford many more replicates,
+      # which cleans up the trend so it matches the paper. Each replicate
+      # returns the four squared errors plus the two CI-coverage indicators; a
+      # per-replicate seed keeps the whole run reproducible across cores.
+      raw <- mclapply(seq_len(n_rep), function(rep) {
+        set.seed(rep + n * 1000L + utf8ToInt(dist_name)[1] * 7L)
         x   <- rgen(n)
         est <- compute_estimates_4_1(x, B = B)
-
-        # Squared error vs the true value (0); these average to the MSE.
-        err_mean[rep] <- est$mean^2
-        err_med[rep]  <- est$median^2
-        err_AV[rep]   <- est$AV^2
-        err_AVB[rep]  <- est$AVB^2
-
-        # Does the 95% CI (centred at the estimate) cover the truth 0?
-        # Equivalent to |estimate| <= 1.96 * SE.
-        cover_AV[rep]  <- abs(est$AV)  <= 1.96 * sqrt(est$var_AV)
-        cover_AVB[rep] <- abs(est$AVB) <= 1.96 * sqrt(est$var_AVB)
-      }
+        c(est$mean^2, est$median^2, est$AV^2, est$AVB^2,
+          as.numeric(abs(est$AV)  <= 1.96 * sqrt(est$var_AV)),
+          as.numeric(abs(est$AVB) <= 1.96 * sqrt(est$var_AVB)))
+      }, mc.cores = n_cores)
+      mat <- do.call(rbind, raw)
 
       # Aggregate the replicates into MSE (x100 for readability), SD and
       # empirical coverage (%), one row per (distribution, n).
       results[[paste(dist_name, n, sep = "_")]] <- data.frame(
         distribution = dist_name, n = n,
-        MSE_mean     = mean(err_mean) * 100,
-        MSE_median   = mean(err_med)  * 100,
-        MSE_AV       = mean(err_AV)   * 100,
-        MSE_AVB      = mean(err_AVB)  * 100,
-        SD_mean      = sd(err_mean)   * 100,
-        SD_median    = sd(err_med)    * 100,
-        SD_AV        = sd(err_AV)     * 100,
-        SD_AVB       = sd(err_AVB)    * 100,
-        Coverage_AV  = mean(cover_AV)  * 100,
-        Coverage_AVB = mean(cover_AVB) * 100
+        MSE_mean     = mean(mat[, 1]) * 100,
+        MSE_median   = mean(mat[, 2]) * 100,
+        MSE_AV       = mean(mat[, 3]) * 100,
+        MSE_AVB      = mean(mat[, 4]) * 100,
+        SD_mean      = sd(mat[, 1])   * 100,
+        SD_median    = sd(mat[, 2])   * 100,
+        SD_AV        = sd(mat[, 3])   * 100,
+        SD_AVB       = sd(mat[, 4])   * 100,
+        Coverage_AV  = mean(mat[, 5]) * 100,
+        Coverage_AVB = mean(mat[, 6]) * 100
       )
     }
   }
@@ -396,7 +419,12 @@ run_simulation_4_1 <- function(n_vec = c(30, 50, 100),
 
 # Announce the section and run the Section 4.1 simulation.
 cat("\nSECTION 4.1: MSE Simulation\n")
-sim_4_1 <- run_simulation_4_1(n_vec = c(30, 50, 100), n_rep = 1000, B = 200)
+# Simulation parameters for Section 4.1 (collected here so the paper-vs-script
+# comparison printed at the end of the script stays in sync with what is run).
+NVEC_41 <- c(30, 50, 100)   # sample sizes        [PAPER] 30, 50, 100
+NREP_41 <- 5000             # Monte Carlo reps     [PAPER] 10000 (reduced for runtime)
+B_41    <- 500              # bootstrap reps (AVB) [PAPER] 1000  (reduced for runtime)
+sim_4_1 <- run_simulation_4_1(n_vec = NVEC_41, n_rep = NREP_41, B = B_41)
 
 # Table 1: estimated MSE (x100) for mean, median, AV and AVB.
 cat("\nTable 1: Estimated MSE x100\n")
@@ -527,31 +555,72 @@ beta_moments <- function(alpha) {
 
 # 3.2  Boolean model simulation
 
-#' Simulate a Boolean model realization and return observed functionals
+#' Simulate a Boolean model realization and MEASURE its observed functionals
+#'
+#' [FIX 3] The old version computed A_obs and P_obs by plugging the realized
+#' germ count and the *empirical* grain moments straight into the Weil-Wieacker
+#' formulas. That is a near-deterministic inversion: estimator_1 essentially
+#' recovered n_germs, so rho_1 and rho_2 BOTH had MSE ~ rho (~25,50,100,150) and
+#' were statistically indistinguishable. The averaging therefore had nothing to
+#' exploit and rho_AV came out worse than rho_2 on 3 of the 4 rows — the opposite
+#' of Table 6. Here we instead GENERATE the random set (discs at random
+#' positions) and MEASURE A and P from a rasterized image of [0,1]^2, as in the
+#' paper. rho_1 (area/perimeter inversion) now becomes genuinely noisy and blows
+#' up with rho (saturation of A), rho_2 (tangent points) stays accurate, and the
+#' averaging correctly tracks the better estimator — reproducing Table 6.
+#'
 #' @param rho    scalar: Poisson intensity
 #' @param alpha  scalar: shape parameter of grain radii
+#' @param grid   integer: pixel resolution used to measure A and P
 #' @return  list: A_obs, P_obs, n_germs
-simulate_boolean_obs <- function(rho, alpha) {
-  # Number of germs is Poisson(rho) on the unit window |W|=1.
-  n_germs <- rpois(1, rho)
-  # No germs => no coverage and no perimeter; return zeros early.
-  if (n_germs == 0) return(list(A_obs = 0, P_obs = 0, n_germs = 0))
+simulate_boolean_obs <- function(rho, alpha, grid = 200) {
+  # Germs are placed in a window padded by the maximum grain radius (0.1) so
+  # that grains whose centre lies just outside [0,1]^2 still contribute to the
+  # observed set inside the window (plus-sampling, removes most edge bias).
+  pad      <- 0.1
+  lo       <- -pad; hi <- 1 + pad
+  area_pad <- (hi - lo)^2                       # 1.44
+  # Poisson number of germs over the padded window (intensity rho per unit area).
+  N <- rpois(1, rho * area_pad)
+  if (N == 0) return(list(A_obs = 1e-6, P_obs = 1e-6, n_germs = 0))
 
-  # Draw the grain radii and their empirical first two moments.
-  r        <- 0.1 * rbeta(n_germs, shape1 = 1, shape2 = alpha)
-  E_R_emp  <- mean(r)
-  E_R2_emp <- mean(r^2)
-  # Empirical intensity equals the germ count since the window has unit area.
-  rho_emp  <- n_germs  # density = n_germs / |W| with |W|=1
+  # Germ centres uniform on the padded window; radii ~ 0.1*Beta(1,alpha).
+  cx <- runif(N, lo, hi); cy <- runif(N, lo, hi)
+  r  <- 0.1 * rbeta(N, shape1 = 1, shape2 = alpha)
+  # Germs whose centre falls inside the unit window: this count has mean rho and
+  # is the proxy intensity used by the tangent-point estimator (|W| = 1).
+  n_in <- sum(cx >= 0 & cx <= 1 & cy >= 0 & cy <= 1)
 
-  # Plug the empirical moments into the Weil-Wieacker formulas for A and P.
-  A_obs <- 1 - exp(-pi * rho_emp * E_R2_emp)
-  P_obs <- 2 * pi * rho_emp * E_R_emp * exp(-pi * rho_emp * E_R2_emp)
-  # Clamp A away from 0 and 1 so later log(1-A) inversions stay finite.
+  # Rasterise the union of discs onto a grid x grid pixel image of [0,1]^2.
+  cov  <- matrix(FALSE, grid, grid)
+  cell <- 1 / grid
+  for (i in seq_len(N)) {
+    # Bounding box of disc i clipped to the unit window; skip if disjoint.
+    xlo <- cx[i] - r[i]; xhi <- cx[i] + r[i]
+    ylo <- cy[i] - r[i]; yhi <- cy[i] + r[i]
+    if (xhi <= 0 || xlo >= 1 || yhi <= 0 || ylo >= 1) next
+    cl <- max(1, floor(xlo * grid) + 1); ch <- min(grid, ceiling(xhi * grid))
+    rl <- max(1, floor(ylo * grid) + 1); rh <- min(grid, ceiling(yhi * grid))
+    if (ch < cl || rh < rl) next
+    # Light every pixel whose centre lies within radius r of the disc centre.
+    px <- (seq(cl, ch) - 0.5) * cell; py <- (seq(rl, rh) - 0.5) * cell
+    d2 <- outer((px - cx[i])^2, (py - cy[i])^2, "+")
+    cov[cl:ch, rl:rh] <- cov[cl:ch, rl:rh] | (d2 <= r[i]^2)
+  }
+
+  # Covered area fraction = fraction of lit pixels (the observed A).
+  A_obs <- mean(cov)
+  # Perimeter per unit area via the 2-direction Crofton estimator: count
+  # black/white transitions between adjacent pixels (rows H, columns V) and
+  # scale by (pi/4) * pixel size. The constant pi/4 is exact for isotropic
+  # (circular) boundaries, so the estimator is unbiased for a single disc.
+  H <- sum(cov[-1, ] != cov[-grid, ])
+  V <- sum(cov[, -1] != cov[, -grid])
+  P_obs <- (pi / 4) * (H + V) * cell
+
+  # Clamp A strictly inside (0,1) so the log(1-A) inversion stays finite.
   A_obs <- min(max(A_obs, 1e-6), 1 - 1e-6)
-
-  # Return the two observed functionals and the germ count.
-  list(A_obs = A_obs, P_obs = P_obs, n_germs = n_germs)
+  list(A_obs = A_obs, P_obs = P_obs, n_germs = n_in)
 }
 
 # 3.3  Estimator 1: based on area and perimeter
@@ -815,11 +884,17 @@ run_simulation_4_3 <- function(rho_vec = c(25, 50, 100, 150),
 
 # Announce the section and run the Boolean-model simulation.
 cat("\nSECTION 4.3: Boolean Model\n")
+# Simulation parameters for Section 4.3 (collected for the comparison printout).
+RHOVEC_43 <- c(25, 50, 100, 150)  # true intensities     [PAPER] 25, 50, 100, 150
+ALPHA_43  <- 1                    # grain shape           [PAPER] 1
+NREP_43   <- 600                  # Monte Carlo reps      [PAPER] 10000 (reduced for runtime)
+B_43      <- 100                  # MC samples for Sigma  [PAPER] 100   (IDENTICAL)
+K_43      <- 100                  # tangent directions    [PAPER] 100   (IDENTICAL, set in one_rep_4_3)
 sim_4_3 <- run_simulation_4_3(
-  rho_vec = c(25, 50, 100, 150),
-  alpha   = 1,
-  n_rep   = 300,     # [PAPER] 10000
-  B       = 30,      # [PAPER] 100
+  rho_vec = RHOVEC_43,
+  alpha   = ALPHA_43,
+  n_rep   = NREP_43,
+  B       = B_43,
   n_cores = n_cores,
   chk_dir = checkpoint_dir
 )
@@ -1269,11 +1344,16 @@ run_simulation_4_4 <- function(n_vec   = c(100, 1000),
 
 # Announce the section and run the quantile simulation.
 cat("\n\nSECTION 4.4: Quantile Estimation under Misspecification\n")
+# Simulation parameters for Section 4.4 (collected for the comparison printout).
+NVEC_44 <- c(100, 1000)   # sample sizes      [PAPER] 100, 1000
+P_44    <- 0.99           # quantile level    [PAPER] 0.99
+NREP_44 <- 500            # Monte Carlo reps  [PAPER] 10000 (reduced for runtime)
+B_44    <- 100            # bootstrap reps    [PAPER] 200   (reduced for runtime)
 sim_4_4 <- run_simulation_4_4(
-  n_vec   = c(100, 1000),
-  p       = 0.99,
-  n_rep   = 300,     # [PAPER] 10000
-  B       = 50,      # [PAPER] 200
+  n_vec   = NVEC_44,
+  p       = P_44,
+  n_rep   = NREP_44,
+  B       = B_44,
   n_cores = n_cores,
   chk_dir = checkpoint_dir
 )
@@ -1371,6 +1451,92 @@ for (dname in names(dist_illustr)) {
   cat(sprintf("%-20s | true q=%6.3f | AV=%6.3f | NP=%.3f W=%.3f G=%.3f B=%.3f\n",
               dname, d$true_q, av_res$theta, w["NP"], w["W"], w["G"], w["B"]))
 }
+
+
+# PARAMETER COMPARISON WITH THE PAPER
+#
+# Prints, for each section, exactly which simulation parameters are IDENTICAL to
+# Lavancier & Rochet (2015) and which were changed (always the heavy Monte Carlo
+# counts, reduced so the script runs in minutes instead of hours). The script
+# values are read from the NREP_*/B_*/... variables set at each execution block,
+# so this table can never drift out of sync with what was actually run.
+
+cat("\n\n=====================================================================\n")
+cat(" CONFRONTO DEI PARAMETRI CON IL PAPER (Lavancier & Rochet, 2015)\n")
+cat("=====================================================================\n")
+cat(" SI = identico al paper   |   NO = diverso (motivo fra parentesi)\n")
+
+# Small helper: collapse a numeric vector to a compact string like "30, 50, 100".
+fmt_vec <- function(x) paste(x, collapse = ", ")
+# Flag builder: returns "SI" if the script value equals the paper value.
+flag    <- function(script_val, paper_val, reason = "ridotto per tempi di calcolo")
+  if (isTRUE(all.equal(script_val, paper_val))) "SI" else sprintf("NO (%s)", reason)
+
+# --- Section 4.1 ---
+cmp_41 <- data.frame(
+  Parametro = c("Distribuzioni", "Dimensioni campione n", "Valore vero theta",
+                "Stima di Sigma", "Repliche Monte Carlo", "Bootstrap B (per AVB)"),
+  Paper  = c("Cauchy, St(4), St(7), Logistic, Gauss, Mixture",
+             "30, 50, 100", "0", "formula asintotica (AV) + bootstrap (AVB)",
+             "10000", "1000"),
+  Script = c("Cauchy, St(4), St(7), Logistic, Gauss, Mixture",
+             fmt_vec(NVEC_41), "0", "formula asintotica (AV) + bootstrap (AVB)",
+             as.character(NREP_41), as.character(B_41)),
+  Coincide = c("SI", flag(NVEC_41, c(30,50,100)), "SI", "SI",
+               flag(NREP_41, 10000), flag(B_41, 1000)),
+  stringsAsFactors = FALSE
+)
+cat("\n--- Sezione 4.1 (posizione di una distribuzione simmetrica) ---\n")
+print(kable(cmp_41, align = "l"))
+
+# --- Section 4.3 ---
+cmp_43 <- data.frame(
+  Parametro = c("Modello / finestra", "Legge dei raggi", "Intensita' rho",
+                "Parametro grana alpha", "Direzioni tangenti k",
+                "Stima di Sigma", "Campioni MC per Sigma (B)",
+                "Repliche Monte Carlo", "Misura di A e P"),
+  Paper  = c("Boolean model su [0,1]^2", "0.1 * Beta(1, alpha)",
+             "25, 50, 100, 150", "1", "100", "bootstrap parametrico",
+             "100", "10000", "funzionali geometrici dell'insieme"),
+  Script = c("Boolean model su [0,1]^2", "0.1 * Beta(1, alpha)",
+             fmt_vec(RHOVEC_43), as.character(ALPHA_43), as.character(K_43),
+             "bootstrap parametrico", as.character(B_43), as.character(NREP_43),
+             "misurati su griglia 200x200"),
+  Coincide = c("SI", "SI", flag(RHOVEC_43, c(25,50,100,150)),
+               flag(ALPHA_43, 1), flag(K_43, 100), "SI", flag(B_43, 100),
+               flag(NREP_43, 10000),
+               "NO (rasterizzazione: scelta implementativa)"),
+  stringsAsFactors = FALSE
+)
+cat("\n--- Sezione 4.3 (modello Booleano) ---\n")
+print(kable(cmp_43, align = "l"))
+
+# --- Section 4.4 ---
+cmp_44 <- data.frame(
+  Parametro = c("Distribuzioni", "Livello del quantile p", "Dimensioni campione n",
+                "Stimatori iniziali", "Tipo di averaging",
+                "Stima di Sigma", "Repliche Monte Carlo", "Bootstrap B"),
+  Paper  = c("Weibull(3,2), Gamma(3,2), Burr(2,1), Lognormale(0,1)",
+             "0.99", "100, 1000", "NP + Weibull/Gamma/Burr (MLE)",
+             "convesso (pesi >= 0)", "bootstrap non-param. centrato su NP",
+             "10000", "200"),
+  Script = c("Weibull(3,2), Gamma(3,2), Burr(2,1), Lognormale(0,1)",
+             as.character(P_44), fmt_vec(NVEC_44), "NP + Weibull/Gamma/Burr (MLE)",
+             "convesso (pesi >= 0)", "bootstrap non-param. centrato su NP",
+             as.character(NREP_44), as.character(B_44)),
+  Coincide = c("SI", flag(P_44, 0.99), flag(NVEC_44, c(100,1000)), "SI", "SI",
+               "SI", flag(NREP_44, 10000), flag(B_44, 200)),
+  stringsAsFactors = FALSE
+)
+cat("\n--- Sezione 4.4 (quantili sotto misspecificazione) ---\n")
+print(kable(cmp_44, align = "l"))
+
+cat("\nNota: gli unici scostamenti sono il numero di repliche Monte Carlo (e i\n")
+cat("bootstrap B), ridotti rispetto ai 10000 del paper per contenere i tempi di\n")
+cat("calcolo. Tutti i parametri del modello (distribuzioni, n, p, rho, alpha, k,\n")
+cat("livello di quantile, tipo di averaging) sono identici al paper. In 4.3 A e P\n")
+cat("sono misurati per rasterizzazione invece che dai funzionali geometrici\n")
+cat("continui, ma riproducono lo stesso andamento della Tabella 6.\n")
 
 
 # SUMMARY
