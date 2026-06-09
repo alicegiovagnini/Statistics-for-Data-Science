@@ -23,7 +23,7 @@ source("00_setup_theory.R")
 #   T2 = rho_2: based on tangent points (Molchanov 1995)
 #
 # Multivariate averaging (d=2, J = [1 0; 1 0; 0 1]):
-#   rho_AV and alpha_AV via eq. 11
+#   rho_AV and alpha_AV
 # Sigma (3x3) estimated via parametric bootstrap (B=100).
 
 # 3.1  Theoretical moments of R ~ 0.1 * Beta(1, alpha)
@@ -39,19 +39,6 @@ beta_moments <- function(alpha) {
 # 3.2  Boolean model simulation
 
 #' Simulate a Boolean model realization and MEASURE its observed functionals
-#'
-#' [FIX 3] The old version computed A_obs and P_obs by plugging the realized
-#' germ count and the *empirical* grain moments straight into the Weil-Wieacker
-#' formulas. That is a near-deterministic inversion: estimator_1 essentially
-#' recovered n_germs, so rho_1 and rho_2 BOTH had MSE ~ rho (~25,50,100,150) and
-#' were statistically indistinguishable. The averaging therefore had nothing to
-#' exploit and rho_AV came out worse than rho_2 on 3 of the 4 rows — the opposite
-#' of Table 6. Here we instead GENERATE the random set (discs at random
-#' positions) and MEASURE A and P from a rasterized image of [0,1]^2, as in the
-#' paper. rho_1 (area/perimeter inversion) now becomes genuinely noisy and blows
-#' up with rho (saturation of A), rho_2 (tangent points) stays accurate, and the
-#' averaging correctly tracks the better estimator — reproducing Table 6.
-#'
 #' @param rho    scalar: Poisson intensity
 #' @param alpha  scalar: shape parameter of grain radii
 #' @param grid   integer: pixel resolution used to measure A and P

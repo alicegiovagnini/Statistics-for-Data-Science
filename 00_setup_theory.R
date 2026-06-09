@@ -20,7 +20,7 @@ set.seed(42)
 # Packages the script depends on: plotting (ggplot2/gridExtra), table
 # printing (knitr), multicore Monte Carlo (parallel), the QP solver used as a
 # fallback for the convex averaging weights (quadprog) and showtext, which lets
-# the plots use the Cambria font of the presentation slides.
+# the plots use the Cambria font.
 required_packages <- c("ggplot2", "gridExtra", "knitr", "parallel", "quadprog",
                        "showtext")
 # Install any package that is not already available, quietly, before loading.
@@ -42,8 +42,37 @@ n_cores <- max(1L, detectCores() - 1L)
 # Report the chosen degree of parallelism so the user can sanity-check it.
 cat(sprintf("Available cores for parallelization: %d\n", n_cores))
 
-# Paper-style cell formatter: combine an MSE value and its standard deviation
-# into a single string "mse (sd)", as in the tables of Lavancier & Rochet (2015).
+#############################################################################
+# WINDOWS SUPPORT (disabled by default — uncomment the block below to enable)
+#############################################################################
+# The application scripts parallelise with mclapply(), which on macOS/Linux
+# forks the process. Windows has no fork(), so there mclapply() silently runs
+# serially. To get real parallelism on Windows, uncomment the block below: it
+# overrides mclapply() with a portable version that uses a PSOCK socket cluster
+# on Windows and falls back to the genuine parallel::mclapply() everywhere else.
+# Nothing else has to change — the call sites keep calling mclapply().
+#
+# mclapply <- function(X, FUN, ..., mc.cores = n_cores) {
+#   # Non-Windows (or single core): use the real fork-based mclapply unchanged.
+#   if (.Platform$OS.type != "windows" || mc.cores <= 1L) {
+#     return(parallel::mclapply(X, FUN, ..., mc.cores = mc.cores))
+#   }
+#   # Windows path: build a socket cluster of fresh R worker sessions.
+#   cl <- parallel::makeCluster(mc.cores)
+#   on.exit(parallel::stopCluster(cl), add = TRUE)   # always release the workers
+#   # Workers start empty, so ship every object from the global environment
+#   # (the averaging_* helpers, n_cores, each section's own functions, ...)
+#   # and load the one package the workers actually call.
+#   parallel::clusterExport(cl, varlist = ls(envir = .GlobalEnv),
+#                           envir = .GlobalEnv)
+#   parallel::clusterEvalQ(cl, library(quadprog))    # solve.QP() in averaging_convex
+#   # parLapply forwards the extra named args (rho, alpha, B, gen, ...) to FUN.
+#   parallel::parLapply(cl, X, FUN, ...)
+# }
+#############################################################################
+
+# Combine an MSE value and its standard deviation
+# into a single string "mse (sd)", as in the paper.
 # `digits` controls the rounding of both numbers.
 mse_sd <- function(mse, sd, digits = 2) {
   sprintf("%.*f (%.*f)", digits, mse, digits, sd)
@@ -51,13 +80,6 @@ mse_sd <- function(mse, sd, digits = 2) {
 
 
 # PRESENTATION STYLE (shared by all plots)
-#
-# The plots are exported into slides that use the Cambria font and a navy/gold
-# colour scheme; the helpers below keep every figure consistent with them.
-
-# Register Cambria from the Microsoft PowerPoint bundle (the font is not in the
-# usual macOS font folders). If it cannot be loaded, fall back to a generic
-# serif so the scripts still run on any machine.
 PRES_FONT <- "serif"
 local({
   ppt <- "/Applications/Microsoft PowerPoint.app/Contents/Resources/DFonts"
@@ -78,9 +100,7 @@ local({
   }
 })
 
-# Slide colour palette, sampled from the four header boxes of the deck:
-# navy, red, green and gold. A fifth muted purple covers the only plot that has
-# five series (Section 4.4); the other plots never reach it.
+# Slide colour palette
 PRES_PALETTE <- c("#1E245A", "#D2483C", "#427836", "#EAA842", "#8C5AA8")
 
 # Assign palette colours to a vector of estimator labels, in order. Returns a
@@ -116,19 +136,19 @@ theme_pres <- function(base_size = 17) {
 #
 # Given k estimators T1,...,Tk of a parameter theta, the averaging estimator is:
 #   theta_hat = lambda_hat' * T
-# with optimal weights (eq. 9):
+# with optimal weights:
 #   lambda* = Sigma^{-1} 1 / (1' Sigma^{-1} 1)
 # subject to sum(lambda) = 1 (Lambda_max, univariate case).
 #
-# For d parameters simultaneously (multivariate, eq. 11):
+# For d parameters simultaneously (multivariate):
 #   theta_hat = (J' Sigma^{-1} J)^{-1} J' Sigma^{-1} T
 # where J assigns estimators to parameters.
 
-# Optimal averaging weights (univariate, Lambda_max, eq. 9)
+# Optimal averaging weights (univariate, Lambda_max)
 #' @param Sigma_hat  k x k estimated MSE matrix
 #' @return  numeric vector of length k (weights summing to 1)
 averaging_weights <- function(Sigma_hat) {
-  # Column of ones, one entry per estimator (the "1" vector in eq. 9).
+  # Column of ones, one entry per estimator (the "1" vector).
   ones        <- rep(1, nrow(Sigma_hat))
   # Solve Sigma * y = 1 instead of forming Sigma^{-1} explicitly:
   # more stable and gives the numerator Sigma^{-1} 1 directly.
@@ -146,7 +166,7 @@ averaging_estimator <- function(T_vec, Sigma_hat) {
   as.numeric(averaging_weights(Sigma_hat) %*% T_vec)
 }
 
-# Asymptotic variance of the averaging estimator (Proposition 3.3)
+# Asymptotic variance of the averaging estimator
 #' @param Sigma_hat  k x k estimated MSE matrix
 #' @return  scalar estimated variance
 averaging_variance <- function(Sigma_hat) {
@@ -156,7 +176,7 @@ averaging_variance <- function(Sigma_hat) {
   as.numeric(t(w) %*% Sigma_hat %*% w)
 }
 
-# Multivariate averaging estimator (eq. 11)
+# Multivariate averaging estimator
 #' @param T_vec      k-vector of point estimates
 #' @param Sigma_hat  k x k estimated MSE matrix
 #' @param J          k x d assignment matrix (J[i,j]=1 if T_i estimates theta_j)
@@ -168,12 +188,12 @@ averaging_multivariate <- function(T_vec, Sigma_hat, J) {
   A         <- t(J) %*% Sigma_inv %*% J
   # b = J' Sigma^{-1} T : projects the estimators onto the parameter space.
   b_vec     <- t(J) %*% Sigma_inv %*% T_vec
-  # Solve A theta = b to get the d combined estimates (eq. 11).
+  # Solve A theta = b to get the d combined estimates.
   solve(A, b_vec)
 }
 
 # Convex averaging: min lambda' Sigma lambda  s.t. sum=1, lambda>=0
-#' Implements the iterative algorithm from Section 2.3, with quadprog fallback.
+#' Implements the iterative algorithm, with quadprog fallback.
 #' @param T_vec      k-vector of point estimates
 #' @param Sigma_hat  k x k estimated MSE matrix
 #' @return  list with: theta (estimate), weights, support (active indices)
@@ -201,7 +221,7 @@ averaging_convex <- function(T_vec, Sigma_hat) {
     # If it is not positive/finite the solution is invalid; stop and fall back.
     if (!is.finite(denom) || denom <= 0) break
 
-    # Candidate weights on the active set (the unconstrained eq.-9 solution).
+    # Candidate weights on the active set (the unconstrained solution).
     w_sub <- Sinv_1 / denom
 
     # If every weight is (numerically) non-negative, the constraint lambda>=0
@@ -252,3 +272,4 @@ averaging_convex <- function(T_vec, Sigma_hat) {
     list(theta = T_vec[best], weights = w_full, support = best)
   })
 }
+

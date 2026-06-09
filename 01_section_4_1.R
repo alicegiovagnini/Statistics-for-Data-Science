@@ -151,15 +151,6 @@ run_simulation_4_1 <- function(n_vec = c(30, 50, 100),
     cat(sprintf("  Distribution: %s\n", dist_name))
 
     for (n in n_vec) {
-      # [FIX 4] Run the n_rep replicates in PARALLEL (the old code looped
-      # serially, which made n_rep=1000 the practical ceiling and left the
-      # reported MSE too noisy: with so few replicates the tiny finite-sample
-      # gain of AV/AVB over the best of mean/median was masked by Monte Carlo
-      # error, so several near-Gaussian rows wrongly showed AV/AVB slightly
-      # WORSE than the mean. Parallelising lets us afford many more replicates,
-      # which cleans up the trend so it matches the paper. Each replicate
-      # returns the four squared errors plus the two CI-coverage indicators; a
-      # per-replicate seed keeps the whole run reproducible across cores.
       raw <- mclapply(seq_len(n_rep), function(rep) {
         set.seed(rep + n * 1000L + utf8ToInt(dist_name)[1] * 7L)
         x   <- rgen(n)
