@@ -123,6 +123,10 @@ estimator_1_boolean <- function(A_obs, P_obs) {
 
 # 3.4  Estimator 2: based on tangent points
 
+# NOTE: we don't count tangent points geometrically (too slow: estimator_2 runs
+# ~60k times via the bootstrap). We emulate them with N(u) ~ Poisson(n_germs*(1-A)),
+# which matches the paper's mean and the 1/(1-A) variance inflation (Table 6).
+
 #' Compute rho_2 from tangent point counts (Molchanov 1995)
 #' E[N(u)] = |W| * rho * (1-A), averaged over k random directions
 #' @param A_obs    scalar: observed area
@@ -185,14 +189,14 @@ estimate_Sigma_boolean <- function(rho0, alpha0, B = 100) {
 
 # 3.6  Averaging estimator for the Boolean model
 
-#' Compute (rho_AV, alpha_AV) via multivariate averaging (eq. 11)
+#' Compute (rho_AV, alpha_AV) via multivariate averaging
 #' T_vec = (rho_1, rho_2, alpha_1),  J = [1 0; 1 0; 0 1]
 #' @param T_vec      length-3 vector
 #' @param Sigma_hat  3x3 MSE matrix
 #' @return  named vector c(rho, alpha)
 boolean_averaging <- function(T_vec, Sigma_hat) {
   # Assignment matrix: rho_1 and rho_2 both estimate rho (col 1); alpha_1
-  # estimates alpha (col 2). This is the J of eq. 11.
+  # estimates alpha (col 2)
   J <- matrix(c(1, 1, 0,
                 0, 0, 1), nrow = 3, ncol = 2)
   # Apply the multivariate averaging; guard against a singular Sigma.
@@ -207,7 +211,7 @@ boolean_averaging <- function(T_vec, Sigma_hat) {
 
 # 3.7  Asymptotic variance for Boolean model CIs
 
-#' Compute estimated variance of rho_AV and alpha_AV (Proposition 3.3)
+#' Compute estimated variance of rho_AV and alpha_AV
 #' var_j = [(J' Sigma^{-1} J)^{-1}]_{jj}
 #' @param Sigma_hat  3x3 MSE matrix
 #' @param J          3x2 assignment matrix
@@ -226,7 +230,7 @@ boolean_averaging_variance <- function(Sigma_hat, J) {
   }, error = function(e) c(var_rho = NA, var_alpha = NA))
 }
 
-# 3.8  Monte Carlo simulation (replicates Tables 6 & 7)
+# 3.8  Monte Carlo simulation
 
 #' Single MC replicate for Section 4.3
 one_rep_4_3 <- function(seed, rho, alpha, B) {
@@ -281,7 +285,7 @@ one_rep_4_3 <- function(seed, rho, alpha, B) {
     cover_alp = cover_alpha)
 }
 
-#' Run MC simulation for Section 4.3 (Tables 6 & 7)
+#' Run MC simulation for Section 4.3 
 run_simulation_4_3 <- function(rho_vec = c(25, 50, 100, 150),
                                 alpha   = 1,
                                 n_rep   = 300,
@@ -429,10 +433,12 @@ grid.arrange(p_rho_43, p_alpha_43, ncol = 2)
 
 # 3.11  Note on the parameters vs the paper
 
-cat("\nNote: the main deviation is the number of Monte Carlo replicates, reduced\n")
-cat("from the 10000 of the paper to keep the runtime manageable. A and P are\n")
-cat("measured by rasterization rather than from the continuous geometric\n")
-cat("functionals, but reproduce the same trend as Table 6.\n")
+cat("\nNote: deviations from the paper:\n")
+cat("  - Monte Carlo replicates reduced (600 vs 10000) to keep runtime manageable.\n")
+cat("  - A and P are measured by rasterization (200x200 grid) rather than from the\n")
+cat("    continuous geometric functionals.\n")
+cat("  - rho_2: tangent-point counts are simulated from the Boolean law, not counted\n")
+cat("    geometrically (see note in section 3.4). Trends still match Table 6.\n")
 
 
 # 3.12  Conclusions

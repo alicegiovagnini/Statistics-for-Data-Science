@@ -117,7 +117,7 @@ compute_estimates_4_1 <- function(x, B = 1000) {
        var_AV  = var_AV,   var_AVB = var_AVB)
 }
 
-# 2.4  Monte Carlo simulation (replicates Tables 1 & 2)
+# 2.4  Monte Carlo simulation
 
 # Run Monte Carlo simulation for Section 4.1
 #' @param n_vec  integer vector: sample sizes
@@ -296,10 +296,13 @@ print(p_weights)
 
 # 2.8  Note on the parameters vs the paper
 
-cat("\nNote: the only deviations from the paper are the number of Monte Carlo\n")
-cat("replicates (5000 vs 10000) and bootstrap replicates B (500 vs 1000), reduced\n")
-cat("to keep the runtime manageable. All other settings (distributions, sample\n")
-cat("sizes, true value, Sigma estimation) are identical to the paper.\n")
+cat("\nNote: deviations from the paper:\n")
+cat("  - Monte Carlo replicates (5000 vs 10000) and bootstrap B (500 vs 1000),\n")
+cat("    reduced to keep the runtime manageable.\n")
+cat("  - Student-t uses df=4 (as in Table 1; the paper's text says 5 df instead).\n")
+cat("  - Cauchy: the asymptotic Sigma uses a numerical safeguard (capped variance)\n")
+cat("    since the sample variance is non-finite.\n")
+cat("Sample sizes, distributions and true value otherwise match the paper.\n")
 
 
 # 2.9  Conclusions
@@ -312,3 +315,4 @@ cat("  - For Gaussian, AV assigns maximum weight to mean (correct)\n")
 cat("  - For Cauchy, AV favors the median (more robust)\n")
 cat("  - CI coverage close to nominal 95% level\n")
 cat("  -> Averaging adapts automatically to distribution shape\n")
+

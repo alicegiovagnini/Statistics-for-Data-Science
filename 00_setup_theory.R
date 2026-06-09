@@ -36,8 +36,9 @@ library(parallel)    # mclapply() for parallel Monte Carlo replicates
 library(quadprog)    # solve.QP() fallback for constrained weights
 library(showtext)    # render custom (Cambria) fonts in the plots
 
-# Use every CPU core but one (leaves the machine responsive); on Windows
-# fork-based mclapply is unavailable, so set n_cores <- 1L there.
+# Use every CPU core but one (leaves the machine responsive). detectCores()
+# works on every platform; on Windows enable the PSOCK block below to actually
+# use these cores (otherwise mclapply runs serially there).
 n_cores <- max(1L, detectCores() - 1L)
 # Report the chosen degree of parallelism so the user can sanity-check it.
 cat(sprintf("Available cores for parallelization: %d\n", n_cores))

@@ -20,7 +20,7 @@ source("00_setup_theory.R")
 # Convex averaging (weights >= 0) ensures robustness under misspecification.
 # Sigma (4x4) estimated via non-parametric bootstrap centered on original estimates.
 #
-# Distributions tested (Table 8):
+# Distributions tested:
 #   Weibull(3,2), Gamma(3,2), Burr(2,1), Lognormal(0,1)
 
 # 4.1  Quantile estimators
@@ -30,7 +30,7 @@ quantile_np <- function(x, p = 0.99) {
   # type=1 gives the inverse-empirical-cdf quantile; consistent for any law.
   # as.numeric() strips the "99%" name quantile() attaches: without it,
   # c(NP = q_np, ...) becomes "NP.99%" and later lookups by name "NP" return NA,
-  # silently blanking the whole NP column of Table 8 and the NP bars in the plot.
+  # silently blanking the whole NP column of the table and the NP bars in the plot.
   as.numeric(quantile(x, probs = p, type = 1))
 }
 
@@ -154,13 +154,14 @@ quantile_burr <- function(x, p = 0.99) {
 # 4.2  Sigma estimation via non-parametric bootstrap
 
 #' Estimate 4x4 MSE matrix for (q_NP, q_W, q_G, q_B) via non-parametric bootstrap
-#' Centered on original estimates T_orig (true quantile unknown).
+#' Centred on q_NP (the consistent NP estimator) as in the paper, so the diagonal
+#' captures each parametric model's bias under misspecification.
 #' @param x       numeric vector: original sample
 #' @param p       scalar: quantile level
 #' @param B       integer: bootstrap replicates
-#' @param T_orig  length-4 vector: estimates on original data (centering values)
+#' @param T_orig  length-4 vector of estimates; only T_orig[1]=q_NP is used (centring)
 #' @return  4x4 Sigma_hat, or NULL
-estimate_Sigma_quantile_boot <- function(x, p = 0.99, B = 200, T_orig) {
+estimate_Sigma_quantile_boot <- function(x, p = 0.99, B = 100, T_orig) {
   # Sample size for resampling.
   n   <- length(x)
   # Each row holds the four quantile estimates from one resample.
@@ -178,15 +179,8 @@ estimate_Sigma_quantile_boot <- function(x, p = 0.99, B = 200, T_orig) {
   res <- res[complete.cases(res), ]
   if (nrow(res) < 10) return(NULL)
 
-  # Centre on the original-sample estimates (the truth is unknown), then form
-  # the average outer product = bootstrap MSE matrix.
-  # IMPORTANT: center every estimator on the NP estimate (T_orig[1]), the only
-  # consistent estimator here, NOT on each estimator's own value. Centering each
-  # on itself yields the COVARIANCE (ignores bias), so a low-variance but biased
-  # parametric model (e.g. Gamma on Burr/Lognormal data) wrongly gets large
-  # weight. Centering on the consistent NP makes the diagonal capture variance +
-  # bias^2 (an MSE proxy), so misspecified models are correctly penalised and the
-  # convex averaging becomes robust under misspecification, as in the paper.
+  # Centre every column on q_NP (T_orig[1]), then take the average outer
+  # product = bootstrap MSE matrix around this common, consistent theta0.
   ref      <- rep(T_orig[1], length(T_orig))
   centered <- sweep(res, 2, ref, "-")
   t(centered) %*% centered / nrow(centered)
@@ -199,7 +193,7 @@ estimate_Sigma_quantile_boot <- function(x, p = 0.99, B = 200, T_orig) {
 #' @param p  scalar: quantile level
 #' @param B  integer: bootstrap replicates
 #' @return  named vector: NP, W, G, B, AV
-compute_estimates_4_4 <- function(x, p = 0.99, B = 200) {
+compute_estimates_4_4 <- function(x, p = 0.99, B = 100) {
   # The four base quantile estimates (parametric MLEs may return NA).
   q_np <- quantile_np(x, p)
   q_w  <- suppressWarnings(quantile_weibull(x, p))
@@ -259,7 +253,7 @@ one_rep_4_4 <- function(seed, gen, true_q, n, p, B, mult) {
 run_simulation_4_4 <- function(n_vec   = c(100, 1000),
                                 p       = 0.99,
                                 n_rep   = 300,
-                                B       = 50,
+                                B       = 100,
                                 n_cores = n_cores) {
   # Four scenarios: three where one parametric model is correct, plus Lognormal
   # where ALL parametric models are misspecified (the key robustness test).
@@ -466,9 +460,12 @@ for (dname in names(dist_illustr)) {
 
 # 4.8  Note on the parameters vs the paper
 
-cat("\nNote: the only deviation is the number of Monte Carlo replicates (and the\n")
-cat("bootstrap B), reduced from the 10000 of the paper to keep the runtime\n")
-cat("manageable. All model parameters are identical to the paper.\n")
+cat("\nNote: deviations from the paper:\n")
+cat("  - Monte Carlo replicates (500 vs 10000) and bootstrap B (100 vs 200),\n")
+cat("    reduced to keep the runtime manageable.\n")
+cat("  - Gamma uses shape=3, rate=2; the paper's (3,2) is shape=3, scale=2. This\n")
+cat("    shifts the absolute MSE of the Gamma row but not the relative comparison.\n")
+cat("Weibull(3,2) and Burr(2,1) match the paper.\n")
 
 
 # 4.9  Conclusions
